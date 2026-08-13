@@ -88,15 +88,27 @@ class FactQuery:
 
     def explain_entity(
         self, entity: str, *, min_confidence: float = 0.5, limit: int = 200,
+        repo: str | None = None,
     ) -> EntityDossier:
         """Depth-1 neighbourhood dossier for one entity: its header plus the
         facts where it is the subject (outgoing) and the object (incoming).
-        Pure deterministic graph traversal — no inference, no generation."""
-        row = self.conn.execute(
-            "SELECT entity_id, kind, name, repo, path FROM entities WHERE name = ? "
-            "ORDER BY entity_id LIMIT 1",
-            (entity,),
-        ).fetchone()
+        Pure deterministic graph traversal — no inference, no generation.
+        `repo` prefers the same-named entity in that repo (two same-named
+        entities in different repos must not swap dossiers); falls back to
+        the lowest entity_id when the repo has no match."""
+        row = None
+        if repo is not None:
+            row = self.conn.execute(
+                "SELECT entity_id, kind, name, repo, path FROM entities "
+                "WHERE name = ? AND repo = ? ORDER BY entity_id LIMIT 1",
+                (entity, repo),
+            ).fetchone()
+        if row is None:
+            row = self.conn.execute(
+                "SELECT entity_id, kind, name, repo, path FROM entities WHERE name = ? "
+                "ORDER BY entity_id LIMIT 1",
+                (entity,),
+            ).fetchone()
         if row is None:
             return EntityDossier(entity=None, outgoing=[], incoming=[])
         ent = EntityRow(entity_id=int(row[0]), kind=row[1], name=row[2],

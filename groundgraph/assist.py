@@ -96,17 +96,27 @@ def rank_symbols(rows: list[tuple[str, str, int | None]], terms: list[str],
     return scored[:top]
 
 
-def defined_symbols(conn: sqlite3.Connection) -> list[tuple[str, str, int | None]]:
+def defined_symbols(
+    conn: sqlite3.Connection, *, repo: str | None = None,
+) -> list[tuple[str, str, int | None]]:
     """(name, path, line) for every symbol entity with a defined-in
-    provenance. A connectable-but-schemaless db (a stale/partial build
-    artifact) degrades to a loud no-op — return [], never crash."""
+    provenance. `repo` filters to one repo's symbols — a graph built from
+    several repos must not ground a task against another repo's paths (a
+    field-measured failure: 6/11 evaluation tasks received mostly
+    nonexistent-in-workspace paths from sibling repos). A
+    connectable-but-schemaless db degrades to a loud no-op — return [],
+    never crash."""
+    sql = ("SELECT DISTINCT e.name, e.path, p.source_ref "
+           "FROM entities e "
+           "LEFT JOIN facts f ON f.subject_id = e.entity_id AND f.predicate = 'defined-in' "
+           "LEFT JOIN provenance p ON p.fact_id = f.fact_id "
+           "WHERE e.kind = 'symbol' AND e.path IS NOT NULL")
+    params: tuple = ()
+    if repo is not None:
+        sql += " AND e.repo = ?"
+        params = (repo,)
     try:
-        raw = conn.execute(
-            """SELECT DISTINCT e.name, e.path, p.source_ref
-               FROM entities e
-               LEFT JOIN facts f ON f.subject_id = e.entity_id AND f.predicate = 'defined-in'
-               LEFT JOIN provenance p ON p.fact_id = f.fact_id
-               WHERE e.kind = 'symbol' AND e.path IS NOT NULL""").fetchall()
+        raw = conn.execute(sql, params).fetchall()
     except sqlite3.Error as e:
         logger.warning("defined_symbols: query failed (%s) — no grounding", e)
         return []
@@ -171,10 +181,18 @@ def _relevant_lessons(fq: FactQuery, terms: list[str], *, top: int = 2) -> list[
     return out
 
 
-def graph_assist(task: str, db_path: str, *, top: int = 5) -> str:
+def graph_assist(task: str, db_path: str, *, top: int = 5,
+                 repo: str | None = None,
+                 workspace: str | Path | None = None) -> str:
     """Pre-injection: ground the task, prepend a relation- and lesson-aware
     block. Returns the task UNCHANGED when nothing grounds or on any db
-    error — a loud no-op, never a crash, never a guess."""
+    error — a loud no-op, never a crash, never a guess.
+
+    `repo` scopes grounding to one repo's symbols (multi-repo graphs
+    otherwise leak sibling-repo paths into the block). `workspace` is the
+    agent's working directory: any ranked ref whose path does not exist
+    under it is DROPPED before rendering — a path the agent cannot open is
+    worse than no path. Both checks run PRE-injection, not post-hoc."""
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     except sqlite3.Error as e:
@@ -182,7 +200,14 @@ def graph_assist(task: str, db_path: str, *, top: int = 5) -> str:
         return task
     try:
         terms = task_terms(task)
-        ranked = rank_symbols(defined_symbols(conn), terms, top=top)
+        ranked = rank_symbols(defined_symbols(conn, repo=repo), terms, top=top)
+        if workspace is not None:
+            ws = Path(workspace)
+            kept = [r for r in ranked if (ws / r[1]).is_file()]
+            if len(kept) < len(ranked):
+                logger.info("graph_assist: dropped %d ref(s) absent from %s",
+                            len(ranked) - len(kept), ws)
+            ranked = kept
         if not ranked:
             return task
         fq = FactQuery(conn)
@@ -222,15 +247,18 @@ def tool_schemas() -> list[dict]:
         {"type": "function", "function": {"name": "query_facts",
             "description": "Query the code memory graph. Filter by subject symbol, "
                            "predicate (calls, called-by, defined-in, tests, "
-                           "co-changed-with, imports, raises, lesson), or object.",
+                           "co-changed-with, imports, raises, lesson), object, "
+                           "or repo (for multi-repo graphs).",
             "parameters": {"type": "object", "properties": {
                 "subject": {"type": "string"}, "predicate": {"type": "string"},
-                "object": {"type": "string"}, "limit": {"type": "integer"}}}}},
+                "object": {"type": "string"}, "repo": {"type": "string"},
+                "limit": {"type": "integer"}}}}},
         {"type": "function", "function": {"name": "explain_entity",
             "description": "Depth-1 dossier for one symbol: where it is defined, "
                            "what it calls, what calls it, what tests it.",
             "parameters": {"type": "object",
-                "properties": {"entity": {"type": "string"}},
+                "properties": {"entity": {"type": "string"},
+                               "repo": {"type": "string"}},
                 "required": ["entity"]}}},
     ]
 
@@ -259,12 +287,12 @@ def run_tool(name: str, args: dict, db_path: str) -> str:
                 limit = 12          # coerce a malformed limit, don't fail the call
             rows = fq.query_facts(
                 subject=args.get("subject"), predicate=args.get("predicate"),
-                object=args.get("object"), limit=limit)
+                object=args.get("object"), repo=args.get("repo"), limit=limit)
             if not rows:
                 return "no facts match that query"
             return json.dumps({"facts": [_fmt_fact(r) for r in rows[:12]]}, indent=1)
         if name == "explain_entity":
-            d = fq.explain_entity(str(args.get("entity", "")))
+            d = fq.explain_entity(str(args.get("entity", "")), repo=args.get("repo"))
             if d.entity is None:
                 return "no facts: unknown entity"
             return json.dumps({

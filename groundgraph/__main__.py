@@ -223,7 +223,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
 
 
 def cmd_assist(args: argparse.Namespace) -> int:
-    out = graph_assist(args.task, args.db)
+    out = graph_assist(args.task, args.db, repo=args.repo, workspace=args.workspace)
     print(out)
     report = assist_report(args.task, out)
     print(f"\n-- lever: injected={report['injected']} "
@@ -277,6 +277,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("assist", help="pre-injection block for a task")
     p.add_argument("--db", default="graph.db")
     p.add_argument("task")
+    p.add_argument("--repo", default=None,
+                   help="scope grounding to one repo (multi-repo graphs)")
+    p.add_argument("--workspace", default=None,
+                   help="drop refs whose path is absent from this directory")
     p.set_defaults(fn=cmd_assist)
 
     p = sub.add_parser("tool", help="run an agent tool (query_facts/explain_entity)")

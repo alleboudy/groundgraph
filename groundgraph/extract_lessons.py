@@ -197,22 +197,37 @@ def extract_lesson_facts(
     return facts
 
 
-def split_sections(markdown: str) -> list[tuple[str, str]]:
-    """Split a markdown document into (heading, body) sections at #/##/###
-    headings. Text before the first heading is attributed to the document's
-    first heading-less pseudo-section only when non-trivial."""
+_RST_UNDERLINE = re.compile(r"^([=\-~^\"'`#*+.])\1{2,}\s*$")
+
+
+def split_sections(text: str) -> list[tuple[str, str]]:
+    """Split a document into (heading, body) sections.
+
+    Two heading styles are recognized: markdown ``#``/``##``/``###`` lines,
+    and reStructuredText over/underline headings (a non-empty line followed
+    by >=3 repeated punctuation characters — how Sphinx docs mark titles).
+    Text before the first heading is ignored."""
     sections: list[tuple[str, str]] = []
     title: str | None = None
     buf: list[str] = []
-    for line in markdown.splitlines():
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         m = _HEADING.match(line)
-        if m:
+        rst = (i + 1 < len(lines) and line.strip() and not _HEADING.match(line)
+               and _RST_UNDERLINE.match(lines[i + 1])
+               and len(lines[i + 1].strip()) >= len(line.strip()) - 2)
+        if m or rst:
             if title is not None:
                 sections.append((title, "\n".join(buf)))
-            title = m.group(2).strip()
+            title = (m.group(2) if m else line).strip()
             buf = []
-        elif title is not None:
+            i += 1 if m else 2          # rst consumes the underline too
+            continue
+        if title is not None:
             buf.append(line)
+        i += 1
     if title is not None:
         sections.append((title, "\n".join(buf)))
     return sections
