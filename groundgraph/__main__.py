@@ -231,6 +231,12 @@ def cmd_assist(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from groundgraph.mcp import serve
+    # MCP servers must keep stdout pure JSON-RPC; logs go to stderr only.
+    return serve(args.db)
+
+
 def cmd_tool(args: argparse.Namespace) -> int:
     try:
         tool_args = json.loads(args.json_args)
@@ -288,6 +294,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("name")
     p.add_argument("json_args")
     p.set_defaults(fn=cmd_tool)
+
+    p = sub.add_parser("mcp", help="MCP stdio server (query_facts/explain_entity/assist)")
+    p.add_argument("--db", default="graph.db")
+    p.set_defaults(fn=cmd_mcp)
 
     args = parser.parse_args(argv)
     return args.fn(args)
