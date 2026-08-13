@@ -1,13 +1,19 @@
 # groundgraph
 
+[![ci](https://github.com/alleboudy/groundgraph/actions/workflows/ci.yml/badge.svg)](https://github.com/alleboudy/groundgraph/actions/workflows/ci.yml)
+
 **A strictly-local, deterministic code-memory graph for coding agents. Zero runtime dependencies.**
 
 Every fact in the graph is *grounded*: an AST node, a git commit, a documentation line, or a mechanical derivation that carries its proof path. There is **no LLM anywhere in the pipeline** — generation is for answering questions, not for remembering things.
+
+![demo](docs/assets/demo.gif)
 
 ```
 pip install -e .
 bash demo/demo.sh          # clones pallets/flask, indexes it, asks it questions
 ```
+
+60-second video walkthrough: see the [v0.1.0 release assets](https://github.com/alleboudy/groundgraph/releases/tag/v0.1.0).
 
 Indexing flask (≈400 commits of history, full source tree) takes **~3 seconds** and produces **~12,500 facts** — on stdlib Python alone: `ast`, `sqlite3`, `re`, and git via subprocess. No embeddings, no vector store, no API keys, no telemetry, nothing leaves your machine.
 
@@ -70,7 +76,17 @@ Start from the most relevant file.
 -- lever: injected=True grounded_symbols=2
 ```
 
-**Agentic tools** — `tool_schemas()` gives you OpenAI-style schemas for `query_facts` and `explain_entity`; `run_tool()` executes them in-process, read-only. Drop them into any tool-calling agent loop.
+**Agentic tools** — `tool_schemas()` gives you OpenAI-style schemas for `query_facts` and `explain_entity`; `run_tool()` executes them in-process, read-only. Drop them into any tool-calling agent loop — or run the ready-made one: `examples/agent_demo.py` points any OpenAI-compatible local endpoint (llama.cpp server, Ollama, vLLM) at the graph, prints the full tool trace, and reports how often the model actually consulted the graph.
+
+**MCP server** — plug the graph into Claude Code or any MCP client, one command:
+
+```
+claude mcp add groundgraph -- python -m groundgraph mcp --db /path/graph.db
+```
+
+Newline-delimited JSON-RPC over stdio, stdlib only, read-only, three tools (`query_facts`, `explain_entity`, `assist` — the last returns the grounded prompt plus its fired-signal report).
+
+**Multi-repo scoping** — a graph built from several repos must not ground a task against another repo's paths (a field-measured failure: 6/11 evaluation tasks received mostly nonexistent-in-workspace paths from sibling repos before this existed). `graph_assist(..., repo=)` scopes grounding; `workspace=` drops any ref whose path does not exist in the agent's working directory — *before* injection, not post-hoc.
 
 Field-learned rules, encoded in the code:
 
@@ -85,6 +101,7 @@ A graph that grows in count while rotting in precision is a regression, not prog
 
 - `groundgraph status` — live/superseded counts, tier ratios, exact-duplicate count, orphan nodes, contradiction candidates (restricted to single-valued predicates — multi-valued relations like `calls` legitimately have many objects; a naive detector once raised 12,000+ false alarms), and decay-dormant counts, each with warning flags.
 - **Source freshness** — the graph is only as current as the checkouts it was built from. `status --repos <path>` reports how many commits each source repo is behind its upstream, from git plumbing only, with honest `unknown` (never a guessed 0) when git can't answer. This exists because we once found a production graph silently built on a checkout **297 commits behind origin** — and no internal metric could see it.
+- **`groundgraph watch`** — the freshness metric turned into a daemon: check-then-act (git fetch → anything behind? → fast-forward the *clean* repos only → rebuild), a near-free no-op when nothing changed, an fcntl single-instance lock so overlapping passes skip instead of stacking writes, and a hard rule that a dirty working tree is never touched. Run it once from cron or with `--interval 900` as a long-lived process.
 - **Stale-fact pruning** — facts whose source file vanished from *their own repo* are soft-archived on every build.
 - Builds are idempotent: re-running over an unchanged repo writes nothing.
 
@@ -123,6 +140,7 @@ prompt = graph_assist(task, "g.db")  # pre-injection, loud no-op on weak match
 - **三层信任分级**：`det:`（AST/git/文档提取的基础事实，每次构建重新验证，永不衰减）、`der:`（逆向边、传递闭包、异常传播等推导事实，携带证明路径，可重新推导）、其余为风险层（按 60 天半衰期在查询时衰减，从不物理删除）。
 - **防腐监控**：健康仪表盘报告重复、孤儿节点、矛盾候选与衰减休眠事实；源新鲜度指标用 git 底层命令如实报告图谱构建源落后上游多少提交。
 - **智能体接入**：既支持把接地上下文预注入任务提示词（弱匹配时安静退化为无操作，绝不输出低置信度的猜测），也提供 `query_facts` / `explain_entity` 两个 OpenAI 风格工具供智能体在任务中调用；并内置"杠杆是否触发"的实验插桩，保证阴性结果可解释。
+- **MCP 服务器**：一条命令即可接入 Claude Code 或任何 MCP 客户端（`python -m groundgraph mcp`，标准库实现的 stdio JSON-RPC，只读）；`groundgraph watch` 守护进程按"先检查后行动"保持图谱与源码仓库同步（干净仓库才拉取，脏工作区绝不触碰）；多仓库图谱支持按仓库限定接地范围并预先剔除工作区中不存在的路径。
 - **实测性能**：索引 Flask 全仓库约 3 秒，产出约 1.25 万条事实，仅用 Python 标准库。
 
 诚实声明：在我们自己的插桩评测中，检索增强稳定地提供了正确的定位（file:line），但**没有**提升小模型端到端修复率 —— 瓶颈在生成而非检索。我们选择公开这套测量方法与该阴性结果，而不是暗示一个不存在的胜利。详见 [docs/honest-eval.md](docs/honest-eval.md)。

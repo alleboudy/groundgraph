@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "groundgraph"
-version = "0.1.0"
+version = "0.2.0"
 description = "Strictly-local, deterministic code-memory graph for coding agents. Zero runtime dependencies."
 readme = "README.md"
 license = { file = "LICENSE" }

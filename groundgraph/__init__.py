@@ -10,7 +10,7 @@ from groundgraph.query import FactQuery
 from groundgraph.store import GraphStore
 from groundgraph.types import ExtractedFact, FactRow, ProposedFact
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ExtractedFact",
