@@ -52,6 +52,16 @@ instrumentation: every run records whether the lever actually fired, so a
 null result is attributable — a methodology we validated the hard way and
 document openly, including our own measured null.
 
+Adoption is one command in either direction: an **MCP stdio server**
+(`python -m groundgraph mcp`) plugs the graph into Claude Code or any MCP
+client, and a zero-dependency example agent loop serves any OpenAI-compatible
+local endpoint. A **freshness daemon** (`groundgraph watch`) keeps the graph
+honest against its source repos: check-then-act, fast-forward clean repos
+only, never touch a dirty working tree, single-instance locked. Multi-repo
+graphs get **repo-scoped grounding** plus a workspace existence-check — a
+fix for a failure mode we measured in our own evaluation and shipped as a
+feature.
+
 Indexing Flask end-to-end takes ~3 seconds and yields ~12,500 facts, on
 stdlib Python only. One SQLite file. Nothing leaves the machine.
 
@@ -78,6 +88,13 @@ stdlib Python only. One SQLite file. Nothing leaves the machine.
 OpenAI 风格工具，进程内只读执行，绝不向智能体循环抛出异常）。两者都内置
 实验插桩：每次运行记录"杠杆是否真正触发"，使阴性结果可归因——这套方法论
 我们以踩坑换来，并连同自己实测的阴性结果一起公开。
+
+接入只需一条命令：**MCP stdio 服务器**（`python -m groundgraph mcp`）可直接
+挂入 Claude Code 或任何 MCP 客户端；零依赖示例智能体循环适配任意 OpenAI 兼容
+的本地推理端点。**新鲜度守护进程**（`groundgraph watch`）以"先检查后行动"的
+方式保持图谱与源码同步：只快进干净的仓库、绝不触碰脏工作区、单实例锁防止并发
+写入。多仓库图谱支持按仓库限定接地范围并预先剔除工作区不存在的路径——这是
+我们在自己的评测中实测到的失效模式，修复后作为特性发布。
 
 端到端索引 Flask 约 3 秒，产出约 1.25 万条事实，仅用 Python 标准库。单个
 SQLite 文件。数据不出本机。

@@ -162,6 +162,11 @@ def build_frames(cap: dict[str, list[str]]) -> list[tuple[str, float]]:
         "groundgraph tool query_facts '{\"predicate\": \"may-raise\", ...}'",
         cap.get("MAYRAISE", []),
         "Agentic tools: exception flow derived with proof paths", 4.5)
+    if cap.get("MCP"):
+        frames += typed_frames(
+            "claude mcp add groundgraph -- python -m groundgraph mcp --db graph.db",
+            cap.get("MCP", []),
+            "MCP server: plug the graph into Claude Code or any MCP client", 6.0)
     frames += typed_frames(
         "groundgraph status",
         cap.get("STATUS", []),
