@@ -132,16 +132,18 @@ def _collect_test_facts(repo_root: Path, repo: str) -> list:
     return out
 
 
-def cmd_build(args: argparse.Namespace) -> int:
+def run_full_build(db: str, paths: list[str], *, docs: list[str] | None,
+                   no_derive: bool = False) -> dict:
+    """The full deterministic pipeline, callable from `build` and `watch`.
+    Idempotent. Raises ValueError on a nonexistent repo path."""
     now = _now()
     total = {"code": 0, "tests": 0, "cochange": 0, "lessons": 0,
              "derived": 0, "tdepends": 0}
-    with GraphStore.open(args.db) as store:
-        for repo_path in args.paths:
+    with GraphStore.open(db) as store:
+        for repo_path in paths:
             root = Path(repo_path).resolve()
             if not root.is_dir():
-                print(f"FATAL: not a directory: {root}", file=sys.stderr)
-                return 1
+                raise ValueError(f"not a directory: {root}")
             repo = root.name
             logger.info("build: code facts for %s", repo)
             total["code"] += _write_code_facts(store, root, repo, now)
@@ -151,11 +153,11 @@ def cmd_build(args: argparse.Namespace) -> int:
             logger.info("build: co-change relation for %s", repo)
             stats = consolidate(store, extract_cochange_facts(str(root), repo), now=now)
             total["cochange"] += stats.added
-        for pattern in args.docs or []:
+        for pattern in docs or []:
             for doc in sorted(globmod.glob(pattern, recursive=True)):
                 stats = consolidate(store, extract_doc_facts(doc), now=now)
                 total["lessons"] += stats.added
-        if not args.no_derive:
+        if not no_derive:
             logger.info("build: derived layer (phase 1)")
             stats = consolidate(store, derive_all(store.conn), now=now)
             total["derived"] = stats.added
@@ -164,9 +166,26 @@ def cmd_build(args: argparse.Namespace) -> int:
             stats = consolidate(
                 store, derive_transitive_module_depends(store.conn), now=now)
             total["tdepends"] = stats.added
-        health = graph_health(store.conn, now=now)
-    print(json.dumps({"written": total, "health": health}, indent=1))
+        total["health"] = graph_health(store.conn, now=now)
+    return total
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    try:
+        totals = run_full_build(args.db, args.paths, docs=args.docs,
+                                no_derive=args.no_derive)
+    except ValueError as e:
+        print(f"FATAL: {e}", file=sys.stderr)
+        return 1
+    health = totals.pop("health")
+    print(json.dumps({"written": totals, "health": health}, indent=1))
     return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    from groundgraph.watch import watch
+    return watch(args.db, args.paths, docs=args.docs,
+                 interval=args.interval, force=args.force)
 
 
 def _ro(db: str) -> sqlite3.Connection:
@@ -298,6 +317,17 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("mcp", help="MCP stdio server (query_facts/explain_entity/assist)")
     p.add_argument("--db", default="graph.db")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser("watch",
+                       help="event-driven freshness: fetch, pull clean repos, rebuild")
+    p.add_argument("--db", default="graph.db")
+    p.add_argument("paths", nargs="+", help="source repo root(s) to keep fresh")
+    p.add_argument("--docs", action="append", default=None)
+    p.add_argument("--interval", type=float, default=None,
+                   help="loop every N seconds (default: one pass, then exit)")
+    p.add_argument("--force", action="store_true",
+                   help="rebuild even when nothing is behind")
+    p.set_defaults(fn=cmd_watch)
 
     args = parser.parse_args(argv)
     return args.fn(args)
