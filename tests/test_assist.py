@@ -36,7 +36,7 @@ def render_row(score):
 '''
 
 LESSON_MD = (
-    "Dive score colour bands are defined by explicit case ranges; "
+    "Game score colour bands are defined by explicit case ranges; "
     "edit the range boundary, not the hue constant. "
     "Why: the hue is shared by other widgets."
 )
