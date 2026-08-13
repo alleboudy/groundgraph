@@ -98,11 +98,20 @@ def _resolve_relative(rel_path: str, module: str | None, level: int) -> str | No
     return ".".join(base) if base else module
 
 
-def _handle_import(node: ast.Import) -> list[tuple[str, str, int, str]]:
+def _denied(top: str, first_party: frozenset[str]) -> bool:
+    """A top module is denied when it is on the deny list AND not declared
+    first-party. Indexing a famous library's own repo (e.g. flask) must not
+    deny the repo's own package — first-party declaration wins."""
+    return top in _DENY_TOP_MODULES and top not in first_party
+
+
+def _handle_import(
+    node: ast.Import, first_party: frozenset[str],
+) -> list[tuple[str, str, int, str]]:
     """`import a.b.c [as z]` -> bindings, dropping denied top modules."""
     out: list[tuple[str, str, int, str]] = []
     for alias in node.names:
-        if alias.name.split(".")[0] in _DENY_TOP_MODULES:
+        if _denied(alias.name.split(".")[0], first_party):
             continue
         local = alias.asname or alias.name.split(".")[0]
         repr_ = f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")
@@ -110,7 +119,9 @@ def _handle_import(node: ast.Import) -> list[tuple[str, str, int, str]]:
     return out
 
 
-def _handle_import_from(node: ast.ImportFrom, rel_path: str) -> list[tuple[str, str, int, str]]:
+def _handle_import_from(
+    node: ast.ImportFrom, rel_path: str, first_party: frozenset[str],
+) -> list[tuple[str, str, int, str]]:
     """`from M import a [as z]` -> bindings. Absolute imports are dropped when
     M's top module is denied; relative imports are first-party by construction.
     Star imports carry no symbol."""
@@ -118,7 +129,7 @@ def _handle_import_from(node: ast.ImportFrom, rel_path: str) -> list[tuple[str, 
         base = _resolve_relative(rel_path, node.module, node.level)
     else:
         base = node.module
-        if base is None or base.split(".")[0] in _DENY_TOP_MODULES:
+        if base is None or _denied(base.split(".")[0], first_party):
             return []
     dots = "." * node.level
     out: list[tuple[str, str, int, str]] = []
@@ -134,16 +145,18 @@ def _handle_import_from(node: ast.ImportFrom, rel_path: str) -> list[tuple[str, 
     return out
 
 
-def _collect_imports(tree: ast.Module, rel_path: str) -> dict[str, tuple[str, int, str]]:
+def _collect_imports(
+    tree: ast.Module, rel_path: str, first_party: frozenset[str],
+) -> dict[str, tuple[str, int, str]]:
     """Map each module-level bound name -> (subject_dotted, lineno, import_repr)
     for FIRST-PARTY imports only. Later imports of the same name win. Only
     top-level statements count."""
     out: dict[str, tuple[str, int, str]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
-            bindings = _handle_import(node)
+            bindings = _handle_import(node, first_party)
         elif isinstance(node, ast.ImportFrom):
-            bindings = _handle_import_from(node, rel_path)
+            bindings = _handle_import_from(node, rel_path, first_party)
         else:
             continue
         for local, subject, lineno, repr_ in bindings:
@@ -187,10 +200,17 @@ def _iter_test_functions(tree: ast.Module) -> list[tuple[str, ast.AST]]:
     return out
 
 
-def extract_test_facts(source: str, rel_path: str, repo: str) -> list[ProposedFact]:
+def extract_test_facts(
+    source: str, rel_path: str, repo: str,
+    *, first_party: frozenset[str] = frozenset(),
+) -> list[ProposedFact]:
     """Extract `tests` facts (test symbol -> the first-party subject it tests)
     from a python test file. PURE: stdlib `ast` only; no I/O, no model.
-    Returns [] for a non-test file or a syntax error."""
+    Returns [] for a non-test file or a syntax error.
+
+    `first_party` names top-level packages that belong to the indexed repo —
+    they override the deny list, so indexing a famous library's own repo does
+    not deny its own package."""
     if not is_test_file(rel_path):
         return []
     try:
@@ -198,7 +218,7 @@ def extract_test_facts(source: str, rel_path: str, repo: str) -> list[ProposedFa
     except SyntaxError:
         return []
 
-    imports = _collect_imports(tree, rel_path)
+    imports = _collect_imports(tree, rel_path, first_party)
     if not imports:
         return []
 

@@ -99,7 +99,26 @@ def _write_code_facts(store: GraphStore, repo_root: Path, repo: str, now: str) -
     return written
 
 
+def _first_party_packages(repo_root: Path) -> frozenset[str]:
+    """Top-level package names that belong to this repo: any `<pkg>/__init__.py`
+    directly at the root or under a conventional `src/` layout. These override
+    the tests-extractor deny list, so indexing a famous library's own repo
+    does not deny its own package."""
+    tops: set[str] = set()
+    for base in (repo_root, repo_root / "src"):
+        if not base.is_dir():
+            continue
+        for child in base.iterdir():
+            if child.is_dir() and (child / "__init__.py").is_file():
+                tops.add(child.name)
+    return frozenset(tops)
+
+
 def _collect_test_facts(repo_root: Path, repo: str) -> list:
+    first_party = _first_party_packages(repo_root)
+    if first_party:
+        logger.info("tests: first-party packages for %s: %s",
+                    repo, ", ".join(sorted(first_party)))
     out = []
     for path in iter_repo_files(repo_root):
         rel = str(path.relative_to(repo_root))
@@ -109,7 +128,7 @@ def _collect_test_facts(repo_root: Path, repo: str) -> list:
             source = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        out.extend(extract_test_facts(source, rel, repo))
+        out.extend(extract_test_facts(source, rel, repo, first_party=first_party))
     return out
 
 

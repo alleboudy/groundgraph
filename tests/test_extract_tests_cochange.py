@@ -37,6 +37,16 @@ def test_tests_non_test_file_and_stdlib_denied() -> None:
     assert extract_test_facts(src, "tests/test_x.py", "demo") == []   # stdlib denied
 
 
+def test_first_party_overrides_denylist() -> None:
+    """Indexing flask's own repo: `import flask` in its tests is first-party
+    and must produce facts, even though `flask` is on the deny list."""
+    src = "import flask\n\ndef test_app():\n    flask.Flask('x')\n"
+    assert extract_test_facts(src, "tests/test_app.py", "flask") == []  # denied by default
+    facts = extract_test_facts(src, "tests/test_app.py", "flask",
+                               first_party=frozenset({"flask"}))
+    assert {(f.subject_name, f.object_name) for f in facts} == {("test_app", "flask")}
+
+
 def test_cochange_pairs_support_and_blast_radius() -> None:
     log = "\n".join([
         SHA_A, "a.py", "b.py",

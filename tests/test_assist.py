@@ -70,6 +70,12 @@ def test_terms_fold_and_dedup() -> None:
     assert t.count("color") == 1
 
 
+def test_terms_keep_snake_case_identifiers_whole() -> None:
+    t = task_terms("url_for builds the wrong scheme behind a proxy")
+    assert "url_for" in t             # NOT split into url + for
+    assert "url" in t                 # the split words still present too
+
+
 def test_rank_excludes_test_paths() -> None:
     rows = [("score_color", "app/theme.py", 1),
             ("test_score_color_bands_red", "tests/test_theme.py", 9)]

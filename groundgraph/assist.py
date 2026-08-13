@@ -62,11 +62,15 @@ def fold_spellings(text: str) -> str:
 
 
 def task_terms(task: str) -> list[str]:
-    """Lowercase alnum words (len>=3), stopwords removed, spellings folded.
-    Order-preserving, de-duplicated."""
+    """Lowercase terms from a task: snake_case identifiers kept WHOLE (a task
+    that names `url_for` must ground the symbol `url_for` — naive word
+    splitting turns it into `url`+`for` and `for` is a stopword), plus alnum
+    words (len>=3). Stopwords removed, spellings folded, order-preserving,
+    de-duplicated."""
+    idents = re.findall(r"[a-zA-Z][a-zA-Z0-9]*(?:_[a-zA-Z0-9]+)+", task.lower())
     words = re.findall(r"[a-zA-Z]{3,}", task.lower())
     seen: list[str] = []
-    for raw_w in words:
+    for raw_w in idents + words:
         w = SPELLING_ALIASES.get(raw_w, raw_w)
         if w not in STOPWORDS and w not in seen:
             seen.append(w)
