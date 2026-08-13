@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "groundgraph"
+version = "0.1.0"
+description = "Strictly-local, deterministic code-memory graph for coding agents. Zero runtime dependencies."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Ahmad Alleboudy" }]
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["code-graph", "agent-memory", "static-analysis", "knowledge-graph", "local-first"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Repository = "https://github.com/alleboudy/groundgraph"
+
+[project.scripts]
+groundgraph = "groundgraph.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
