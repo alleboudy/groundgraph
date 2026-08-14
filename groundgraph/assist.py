@@ -181,50 +181,90 @@ def _relevant_lessons(fq: FactQuery, terms: list[str], *, top: int = 2) -> list[
     return out
 
 
-def graph_assist(task: str, db_path: str, *, top: int = 5,
-                 repo: str | None = None,
-                 workspace: str | Path | None = None) -> str:
-    """Pre-injection: ground the task, prepend a relation- and lesson-aware
-    block. Returns the task UNCHANGED when nothing grounds or on any db
-    error — a loud no-op, never a crash, never a guess.
+def graph_assist_ex(task: str, db_path: str, *, top: int = 5,
+                    repo: str | None = None,
+                    workspace: str | Path | None = None,
+                    semantic_endpoint: str | None = None,
+                    semantic_model: str = "embed",
+                    semantic_key: str = "none") -> tuple[str, dict]:
+    """Pre-injection with a full report: (prompt, {injected, grounded_symbols,
+    lexical_hits, semantic_hits}). Returns the task UNCHANGED when nothing
+    grounds or on any db error — a loud no-op, never a crash, never a guess.
 
     `repo` scopes grounding to one repo's symbols (multi-repo graphs
     otherwise leak sibling-repo paths into the block). `workspace` is the
     agent's working directory: any ranked ref whose path does not exist
     under it is DROPPED before rendering — a path the agent cannot open is
-    worse than no path. Both checks run PRE-injection, not post-hoc."""
+    worse than no path. Both checks run PRE-injection, not post-hoc.
+
+    `semantic_endpoint` enables the hybrid: semantic proposals (entity-keyed
+    embeddings, see groundgraph.semantic) are MERGED after the lexical ones
+    and pass the same verification — the embedder proposes, the graph
+    verifies. An unreachable endpoint degrades to lexical-only, logged."""
+    no_report = {"injected": False, "grounded_symbols": 0,
+                 "lexical_hits": 0, "semantic_hits": 0}
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     except sqlite3.Error as e:
         logger.warning("graph_assist: db unavailable (%s) — prompt unchanged", e)
-        return task
+        return task, no_report
     try:
         terms = task_terms(task)
         ranked = rank_symbols(defined_symbols(conn, repo=repo), terms, top=top)
+        merged: list[tuple[str, str, int | None, str]] = [
+            (n, p, ln, "lexical") for n, p, ln, _sc in ranked]
+        if semantic_endpoint is not None:
+            from groundgraph.semantic import propose
+            seen = {(n, p) for n, p, _ln, _s in merged}
+            for name, path, line, _score in propose(
+                    task, db_path, endpoint=semantic_endpoint,
+                    model=semantic_model, api_key=semantic_key,
+                    top_k=top, repo=repo):
+                if path and (name, path) not in seen:
+                    merged.append((name, path, line, "semantic"))
+                    seen.add((name, path))
         if workspace is not None:
             ws = Path(workspace)
-            kept = [r for r in ranked if (ws / r[1]).is_file()]
-            if len(kept) < len(ranked):
+            kept = [r for r in merged if (ws / r[1]).is_file()]
+            if len(kept) < len(merged):
                 logger.info("graph_assist: dropped %d ref(s) absent from %s",
-                            len(ranked) - len(kept), ws)
-            ranked = kept
-        if not ranked:
-            return task
+                            len(merged) - len(kept), ws)
+            merged = kept
+        merged = merged[:top]
+        if not merged:
+            return task, no_report
         fq = FactQuery(conn)
-        blocks = [_symbol_block(fq, n, p, ln) for n, p, ln, _sc in ranked]
+        blocks = [_symbol_block(fq, n, p, ln) for n, p, ln, _src in merged]
         lessons = _relevant_lessons(fq, terms)
     except sqlite3.Error as e:
         # A db that grounds via defined_symbols but fails a deeper query (a
         # partial/older schema) must degrade the same way: no-op, not a crash.
         logger.warning("graph_assist: query failed (%s) — prompt unchanged", e)
-        return task
+        return task, no_report
     finally:
         conn.close()
     out = ["[graph] From the code memory graph, likely relevant:", *blocks]
     if lessons:
         out += ["Relevant lessons/conventions:", *lessons]
     out.append("Start from the most relevant file.")
-    return "\n".join(out) + "\n\n" + task
+    report = {"injected": True, "grounded_symbols": len(merged),
+              "lexical_hits": sum(1 for r in merged if r[3] == "lexical"),
+              "semantic_hits": sum(1 for r in merged if r[3] == "semantic")}
+    return "\n".join(out) + "\n\n" + task, report
+
+
+def graph_assist(task: str, db_path: str, *, top: int = 5,
+                 repo: str | None = None,
+                 workspace: str | Path | None = None,
+                 semantic_endpoint: str | None = None,
+                 semantic_model: str = "embed",
+                 semantic_key: str = "none") -> str:
+    """Compatibility wrapper over graph_assist_ex — returns the prompt only."""
+    out, _report = graph_assist_ex(
+        task, db_path, top=top, repo=repo, workspace=workspace,
+        semantic_endpoint=semantic_endpoint, semantic_model=semantic_model,
+        semantic_key=semantic_key)
+    return out
 
 
 def assist_report(original: str, assisted: str) -> dict:

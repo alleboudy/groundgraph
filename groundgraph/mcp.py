@@ -20,7 +20,7 @@ import logging
 import sys
 from typing import Any
 
-from groundgraph.assist import assist_report, graph_assist, run_tool
+from groundgraph.assist import graph_assist_ex, run_tool
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,8 @@ def _tool_result(text: str, *, is_error: bool = False) -> dict:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
-def call_tool(name: str, args: dict, db_path: str) -> dict:
+def call_tool(name: str, args: dict, db_path: str,
+              semantic_endpoint: str | None = None) -> dict:
     """Execute one MCP tool call. Never raises — errors become isError
     results the model can read and react to."""
     try:
@@ -75,9 +76,10 @@ def call_tool(name: str, args: dict, db_path: str) -> dict:
             return _tool_result(run_tool(name, args, db_path))
         if name == "assist":
             task = str(args.get("task", ""))
-            out = graph_assist(task, db_path, repo=args.get("repo"),
-                               workspace=args.get("workspace"))
-            rep = assist_report(task, out)
+            out, rep = graph_assist_ex(
+                task, db_path, repo=args.get("repo"),
+                workspace=args.get("workspace"),
+                semantic_endpoint=semantic_endpoint)
             return _tool_result(json.dumps({"prompt": out, **rep}, indent=1))
         return _tool_result(f"unknown tool {name}", is_error=True)
     except Exception as e:  # noqa: BLE001 — the loop must survive anything
@@ -85,7 +87,8 @@ def call_tool(name: str, args: dict, db_path: str) -> dict:
         return _tool_result(f"tool failed: {e}", is_error=True)
 
 
-def handle_request(req: dict, db_path: str) -> dict | None:
+def handle_request(req: dict, db_path: str,
+                   semantic_endpoint: str | None = None) -> dict | None:
     """One JSON-RPC request -> response dict, or None for notifications."""
     method = req.get("method", "")
     rid = req.get("id")
@@ -96,7 +99,7 @@ def handle_request(req: dict, db_path: str) -> dict | None:
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": client_ver,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "groundgraph", "version": "0.2.0"}}}
+            "serverInfo": {"name": "groundgraph", "version": "0.3.0"}}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": rid, "result": {}}
     if method == "tools/list":
@@ -104,13 +107,15 @@ def handle_request(req: dict, db_path: str) -> dict | None:
     if method == "tools/call":
         params = req.get("params") or {}
         result = call_tool(str(params.get("name", "")),
-                           params.get("arguments") or {}, db_path)
+                           params.get("arguments") or {}, db_path,
+                           semantic_endpoint)
         return {"jsonrpc": "2.0", "id": rid, "result": result}
     return {"jsonrpc": "2.0", "id": rid,
             "error": {"code": -32601, "message": f"method not found: {method}"}}
 
 
-def serve(db_path: str, *, stdin=None, stdout=None) -> int:
+def serve(db_path: str, *, stdin=None, stdout=None,
+          semantic_endpoint: str | None = None) -> int:
     """The stdio loop: one JSON-RPC message per line. A malformed line gets
     a parse error; the loop continues until EOF."""
     stdin = stdin or sys.stdin
@@ -126,7 +131,7 @@ def serve(db_path: str, *, stdin=None, stdout=None) -> int:
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32700, "message": "parse error"}}
         else:
-            resp = handle_request(req, db_path)
+            resp = handle_request(req, db_path, semantic_endpoint)
         if resp is not None:
             stdout.write(json.dumps(resp) + "\n")
             stdout.flush()

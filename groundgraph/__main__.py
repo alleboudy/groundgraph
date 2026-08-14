@@ -23,7 +23,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from groundgraph.assist import assist_report, graph_assist, run_tool
+from groundgraph.assist import run_tool
 from groundgraph.consolidate import consolidate, prune_stale_facts
 from groundgraph.derive import derive_all
 from groundgraph.derive_tdepends import derive_transitive_module_depends
@@ -242,18 +242,36 @@ def cmd_explain(args: argparse.Namespace) -> int:
 
 
 def cmd_assist(args: argparse.Namespace) -> int:
-    out = graph_assist(args.task, args.db, repo=args.repo, workspace=args.workspace)
+    from groundgraph.assist import graph_assist_ex
+    out, report = graph_assist_ex(
+        args.task, args.db, repo=args.repo, workspace=args.workspace,
+        semantic_endpoint=args.semantic_endpoint,
+        semantic_model=args.semantic_model)
     print(out)
-    report = assist_report(args.task, out)
     print(f"\n-- lever: injected={report['injected']} "
-          f"grounded_symbols={report['grounded_symbols']}", file=sys.stderr)
+          f"grounded_symbols={report['grounded_symbols']} "
+          f"(lexical {report['lexical_hits']}, semantic {report['semantic_hits']})",
+          file=sys.stderr)
+    return 0
+
+
+def cmd_semantic_index(args: argparse.Namespace) -> int:
+    from groundgraph.semantic import index_entities
+    try:
+        counts = index_entities(args.db, args.path, endpoint=args.endpoint,
+                                model=args.model, api_key=args.api_key,
+                                now=_now())
+    except Exception as e:  # noqa: BLE001 — index time is an explicit action
+        print(f"FATAL: embedding endpoint failed: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(counts))
     return 0
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
     from groundgraph.mcp import serve
     # MCP servers must keep stdout pure JSON-RPC; logs go to stderr only.
-    return serve(args.db)
+    return serve(args.db, semantic_endpoint=args.semantic_endpoint)
 
 
 def cmd_tool(args: argparse.Namespace) -> int:
@@ -306,7 +324,20 @@ def main(argv: list[str] | None = None) -> int:
                    help="scope grounding to one repo (multi-repo graphs)")
     p.add_argument("--workspace", default=None,
                    help="drop refs whose path is absent from this directory")
+    p.add_argument("--semantic-endpoint", default=None,
+                   help="local /v1 embeddings endpoint enables hybrid grounding")
+    p.add_argument("--semantic-model", default="embed")
     p.set_defaults(fn=cmd_assist)
+
+    p = sub.add_parser("semantic-index",
+                       help="embed defined symbols + lessons via a local endpoint")
+    p.add_argument("--db", default="graph.db")
+    p.add_argument("path", help="repo checkout the graph was built from")
+    p.add_argument("--endpoint", required=True,
+                   help="OpenAI-compatible /v1 base URL (local llama.cpp/Ollama)")
+    p.add_argument("--model", default="embed")
+    p.add_argument("--api-key", default="none")
+    p.set_defaults(fn=cmd_semantic_index)
 
     p = sub.add_parser("tool", help="run an agent tool (query_facts/explain_entity)")
     p.add_argument("--db", default="graph.db")
@@ -316,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("mcp", help="MCP stdio server (query_facts/explain_entity/assist)")
     p.add_argument("--db", default="graph.db")
+    p.add_argument("--semantic-endpoint", default=None,
+                   help="local /v1 embeddings endpoint enables hybrid assist")
     p.set_defaults(fn=cmd_mcp)
 
     p = sub.add_parser("watch",

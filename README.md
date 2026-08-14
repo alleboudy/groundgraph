@@ -88,6 +88,24 @@ Newline-delimited JSON-RPC over stdio, stdlib only, read-only, three tools (`que
 
 **Multi-repo scoping** — a graph built from several repos must not ground a task against another repo's paths (a field-measured failure: 6/11 evaluation tasks received mostly nonexistent-in-workspace paths from sibling repos before this existed). `graph_assist(..., repo=)` scopes grounding; `workspace=` drops any ref whose path does not exist in the agent's working directory — *before* injection, not post-hoc.
 
+## Hybrid grounding: the embedder proposes, the graph verifies
+
+Lexical grounding is exact and proof-carrying but vocabulary-bound: a task that shares no words with any symbol name grounds nothing (by design). The optional **semantic sidecar** closes exactly that gap without surrendering the ground-truth mandate — and without adding a dependency:
+
+```
+# one-time: embed every defined symbol's source window + every lesson,
+# via ANY local OpenAI-compatible /v1/embeddings endpoint
+# (llama.cpp server with an embedding GGUF, Ollama, LM Studio)
+groundgraph semantic-index --db g.db /path/to/repo --endpoint http://127.0.0.1:8080/v1
+
+# hybrid assist: lexical + semantic proposals, one verified block
+groundgraph assist --db g.db --semantic-endpoint http://127.0.0.1:8080/v1 \
+  "the widget turns yellow sometimes"
+-- lever: injected=True grounded_symbols=1 (lexical 0, semantic 1)
+```
+
+Design rules: every embedding is **keyed to a graph entity** (a semantic hit *is* a graph node — hits expand through the same `explain_entity` neighbourhoods); proposals pass the same repo scoping and workspace existence-check as lexical ones; an unreachable endpoint degrades to lexical-only, logged, never a crash. Vectors live in the same SQLite file; cosine is pure Python (`numpy` used only if already installed); the embedding model stays behind a local HTTP boundary. The fired-signal now attributes grounding per proposer (`lexical_hits` / `semantic_hits`), so experiments can tell which layer earned each grounding. This is the measured lesson from our own evaluation: dense retrieval lands on *consumers* and prose-adjacent code the AST layer is blind to, while the graph supplies the definitions, relations, and proofs — each is the other's missing half.
+
 Field-learned rules, encoded in the code:
 
 - **A wrong file is worse than none.** Weak matches degrade to a *loud no-op* — the task returns unchanged. The injector never emits a low-confidence guess, because a bad grounding actively steers an agent into the weeds.
