@@ -5,7 +5,7 @@ LM Studio — all strictly local options) at the groundgraph tools and lets
 the model answer questions BY QUERYING THE GRAPH instead of guessing:
 
     export GG_BASE_URL=http://127.0.0.1:8080/v1     # your local server
-    export GG_MODEL=qwen2.5-coder-7b-instruct       # whatever it serves
+    export GG_MODEL=your-served-model-name          # whatever your server serves
     export GG_API_KEY=none                          # if the server needs one
     python examples/agent_demo.py --db /tmp/gg-flask.db \
         "What can Scaffold.__init__ raise, and which tests cover Flask?"
